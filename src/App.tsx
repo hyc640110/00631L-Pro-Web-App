@@ -8,11 +8,10 @@ type Holding = { symbol: SymbolCode; shares: number; avgCost: number; targetWeig
 type CashItem = { id: string; name: string; amount: number; note: string };
 type LoanItem = { id: string; name: string; principal: number; annualRate: number; monthlyPayment: number; startDate: string };
 type Trade = { id: string; date: string; symbol: SymbolCode; action: TradeAction; shares: number; price: number; fee: number; tax: number; note: string };
-type FirebaseConfig = { databaseURL: string; secretPath: string; autoSync: boolean; lastSyncAt: string; clientId: string };
+type FirebaseConfig = { databaseURL: string; secretPath: string };
 type AppState = { holdings: Holding[]; cash: CashItem[]; loans: LoanItem[]; trades: Trade[]; monthlyContribution: number; simCagr: number; simDividend: number; simYears: number; refreshSec: number; firebase: FirebaseConfig; workerUrl: string };
 
-const STORAGE_KEY = '00631l-pro-v62-state';
-const LEGACY_STORAGE_KEYS = ['00631l-pro-v61-state', '00631l-pro-v6-state'];
+const STORAGE_KEY = '00631l-pro-v61-state';
 const SYMBOLS: SymbolCode[] = ['00631L','0050','00865B'];
 const uid = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
 const now = () => new Date().toISOString();
@@ -36,34 +35,11 @@ const defaultState: AppState = {
   cash: [{ id:uid(), name:'高利活存 / 預備金', amount:50000, note:'逢低加碼資金' }],
   loans: [{ id:uid(), name:'信貸', principal:0, annualRate:6.5, monthlyPayment:10000, startDate:new Date().toISOString().slice(0,10) }],
   trades: [], monthlyContribution:5000, simCagr:10, simDividend:2, simYears:10, refreshSec:60,
-  firebase: { databaseURL:'', secretPath:'00631l-pro-v62', autoSync:false, lastSyncAt:'', clientId:uid() }, workerUrl:''
+  firebase: { databaseURL:'', secretPath:'00631l-pro-v61' }, workerUrl:''
 };
 
-
-function normalizeState(raw: Partial<AppState> | null): AppState {
-  const merged = { ...defaultState, ...(raw || {}) } as AppState;
-  merged.firebase = { ...defaultState.firebase, ...(raw?.firebase || {}) };
-  if (!merged.firebase.clientId) merged.firebase.clientId = uid();
-  if (!Array.isArray(merged.trades)) merged.trades = [];
-  if (!Array.isArray(merged.holdings)) merged.holdings = defaultState.holdings;
-  if (!Array.isArray(merged.cash)) merged.cash = defaultState.cash;
-  if (!Array.isArray(merged.loans)) merged.loans = defaultState.loans;
-  return merged;
-}
-function readState(): AppState {
-  try {
-    const current = localStorage.getItem(STORAGE_KEY);
-    if (current) return normalizeState(JSON.parse(current));
-    for (const key of LEGACY_STORAGE_KEYS) {
-      const legacy = localStorage.getItem(key);
-      if (legacy) return normalizeState(JSON.parse(legacy));
-    }
-    return defaultState;
-  } catch { return defaultState; }
-}
+function readState(): AppState { try { return { ...defaultState, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; } catch { return defaultState; } }
 function writeState(s: AppState) { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }
-function stateForCloud(s: AppState) { return { ...s, firebase: { ...s.firebase, lastSyncAt: now() }, cloudMeta: { app:'00631L Pro Web App', version:'6.2', updatedAt:now() } }; }
-
 
 function parseWorkerQuote(symbol: SymbolCode, data: any): Quote | null {
   if (typeof data?.price === 'number') {
@@ -97,17 +73,12 @@ async function fetchQuote(symbol: SymbolCode, workerUrl: string): Promise<Quote>
 async function syncFirebase(config: FirebaseConfig, state?: AppState): Promise<AppState | null> {
   if (!config.databaseURL) return null;
   const base = config.databaseURL.replace(/\/$/, '');
-  const path = encodeURIComponent(config.secretPath || '00631l-pro-v62');
+  const path = encodeURIComponent(config.secretPath || '00631l-pro-v61');
   const url = `${base}/portfolio/${path}.json`;
-  if (state) {
-    await fetch(url, { method:'PUT', headers:{'content-type':'application/json'}, body:JSON.stringify(stateForCloud(state)) });
-    return null;
-  }
-  const res = await fetch(url, { cache:'no-store' }); if (!res.ok) throw new Error(`Firebase ${res.status}`);
-  const data = await res.json();
-  return data ? normalizeState(data) : null;
+  if (state) { await fetch(url, { method:'PUT', headers:{'content-type':'application/json'}, body:JSON.stringify(state) }); return null; }
+  const res = await fetch(url); if (!res.ok) throw new Error(`Firebase ${res.status}`);
+  return await res.json();
 }
-
 
 function calculateMetrics(state: AppState, quotes: Record<SymbolCode, Quote>) {
   const rows = state.holdings.map(h => { const q = quotes[h.symbol]; const marketValue = h.shares*q.price; const cost = h.shares*h.avgCost; const pnl=marketValue-cost; const dayPnl=h.shares*q.change; return {...h, quote:q, marketValue, cost, pnl, dayPnl}; });
@@ -138,36 +109,18 @@ function App(){
   const [state,setState]=useState<AppState>(()=>readState());
   const [quotes,setQuotes]=useState<Record<SymbolCode,Quote>>(defaultQuotes);
   const [sync,setSync]=useState('尚未同步');
-  const [syncBusy,setSyncBusy]=useState(false);
   const [draft,setDraft]=useState<Trade>({id:uid(),date:new Date().toISOString().slice(0,10),symbol:'00631L',action:'BUY',shares:1,price:defaultQuotes['00631L'].price,fee:20,tax:0,note:''});
   useEffect(()=>writeState(state),[state]);
-  useEffect(()=>{
-    if (!state.firebase.autoSync || !state.firebase.databaseURL) return;
-    const id = setTimeout(async()=>{
-      try {
-        setSyncBusy(true);
-        await syncFirebase(state.firebase, state);
-        const t = now();
-        setState(s=>({...s, firebase:{...s.firebase,lastSyncAt:t}}));
-        setSync('自動同步成功 '+tw(t));
-      } catch(e:any) { setSync('自動同步失敗 '+(e?.message || e)); }
-      finally { setSyncBusy(false); }
-    }, 1200);
-    return ()=>clearTimeout(id);
-  },[state.holdings,state.cash,state.loans,state.trades,state.monthlyContribution,state.simCagr,state.simDividend,state.simYears,state.refreshSec,state.workerUrl,state.firebase.databaseURL,state.firebase.secretPath,state.firebase.autoSync]);
   const refreshQuotes=async()=>{ const entries=await Promise.all(SYMBOLS.map(async s=>[s,await fetchQuote(s,state.workerUrl)] as const)); setQuotes(Object.fromEntries(entries) as Record<SymbolCode,Quote>); };
   useEffect(()=>{ refreshQuotes(); const id=setInterval(refreshQuotes, Math.max(15,state.refreshSec)*1000); return()=>clearInterval(id); },[state.workerUrl,state.refreshSec]);
   const m=useMemo(()=>calculateMetrics(state,quotes),[state,quotes]); const rb=useMemo(()=>rebalance(state,quotes),[state,quotes]); const [mode,hint,tone]=advice(m); const sim=simSeries(state,m.netWorth);
   const updateHolding=(symbol:SymbolCode,key:keyof Holding,value:number)=>setState(s=>({...s,holdings:s.holdings.map(h=>h.symbol===symbol?{...h,[key]:value}:h)}));
-  const uploadCloud=async()=>{ setSyncBusy(true); try { await syncFirebase(state.firebase,state); const t=now(); setState(s=>({...s,firebase:{...s.firebase,lastSyncAt:t}})); setSync('已上傳 '+tw(t)); } catch(e:any){ setSync('上傳失敗 '+(e?.message||e)); } finally { setSyncBusy(false); } };
-  const downloadCloud=async()=>{ setSyncBusy(true); try { const cloud=await syncFirebase(state.firebase); if(cloud) setState(normalizeState({...cloud,firebase:{...cloud.firebase,databaseURL:state.firebase.databaseURL,secretPath:state.firebase.secretPath,clientId:state.firebase.clientId}})); setSync('已下載 '+tw(now())); } catch(e:any){ setSync('下載失敗 '+(e?.message||e)); } finally { setSyncBusy(false); } };
-  const toggleAutoSync=()=>setState(s=>({...s,firebase:{...s.firebase,autoSync:!s.firebase.autoSync}}));
   const addTrade=()=>{ setState(s=>({...s,trades:[draft,...s.trades]})); setDraft({...draft,id:uid()}); };
   const applyTrade=(t:Trade)=>{ setState(s=>{ const holdings=s.holdings.map(h=>{ if(h.symbol!==t.symbol) return h; if(t.action==='BUY'){ const totalCost=h.shares*h.avgCost + t.shares*t.price + t.fee; const shares=h.shares+t.shares; return {...h,shares,avgCost:shares?totalCost/shares:h.avgCost}; } if(t.action==='SELL'){ return {...h,shares:Math.max(0,h.shares-t.shares)}; } return h; }); return {...s,holdings,trades:[t,...s.trades]}; }); };
   const backup=()=>{ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`00631l-pro-v61-backup-${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url); };
   const restore=async(f?:File)=>{ if(!f)return; setState(JSON.parse(await f.text())); };
   return <main>
-    <header className="hero"><div><p className="eyebrow">00631L PRO WEB APP V6.2 ULTIMATE</p><h1>台股槓桿配置儀表板</h1><p>即時股價、交易紀錄、Firebase 自動同步、再平衡、四部位策略、十年模擬與 PWA。</p></div><button onClick={refreshQuotes}>更新股價</button></header>
+    <header className="hero"><div><p className="eyebrow">00631L PRO WEB APP V6.1 ULTIMATE</p><h1>台股槓桿配置儀表板</h1><p>即時股價、交易紀錄、Firebase 雲端同步、再平衡、四部位策略、十年模擬與 PWA。</p></div><button onClick={refreshQuotes}>更新股價</button></header>
     <nav className="tabs"><button className={tab==='dashboard'?'active':''} onClick={()=>setTab('dashboard')}>儀表板</button><button className={tab==='trades'?'active':''} onClick={()=>setTab('trades')}>交易紀錄</button><button className={tab==='sync'?'active':''} onClick={()=>setTab('sync')}>同步設定</button><span>股價更新 {tw(Object.values(quotes)[0].updatedAt)}</span></nav>
     {tab==='dashboard' && <>
       <section className="grid stats"><Stat label="總資產" value={money(m.totalAssets)}/><Stat label="今日損益" value={money(m.dayPnl)} tone={m.dayPnl>=0?'up':'down'}/><Stat label="淨資產" value={money(m.netWorth)}/><Stat label="借款" value={money(m.debt)} tone="warn"/><Stat label="Beta" value={m.beta.toFixed(2)}/><Stat label="現金比例" value={pct(m.cashRatio)}/><Stat label="槓桿比例" value={m.leverage.toFixed(2)+'x'}/><Stat label="策略模式" value={mode} tone={tone}/></section>
@@ -179,7 +132,7 @@ function App(){
       <Card title="模擬參數與風險圖"><div className="params"><label>每月投入<input type="number" value={state.monthlyContribution} onChange={e=>setState(s=>({...s,monthlyContribution:num(e.target.valueAsNumber)}))}/></label><label>CAGR %<input type="number" value={state.simCagr} onChange={e=>setState(s=>({...s,simCagr:num(e.target.valueAsNumber)}))}/></label><label>股利 %<input type="number" value={state.simDividend} onChange={e=>setState(s=>({...s,simDividend:num(e.target.valueAsNumber)}))}/></label><label>年數<input type="number" value={state.simYears} onChange={e=>setState(s=>({...s,simYears:num(e.target.valueAsNumber)}))}/></label></div><div className="bars"><Risk label="現金%" value={m.cashRatio}/><Risk label="Beta" value={m.beta*50}/><Risk label="槓桿" value={m.leverage*50}/></div></Card>
     </>}
     {tab==='trades' && <Card title="交易紀錄"><div className="trade-form"><input type="date" value={draft.date} onChange={e=>setDraft({...draft,date:e.target.value})}/><select value={draft.symbol} onChange={e=>setDraft({...draft,symbol:e.target.value as SymbolCode})}>{SYMBOLS.map(s=><option key={s}>{s}</option>)}</select><select value={draft.action} onChange={e=>setDraft({...draft,action:e.target.value as TradeAction})}><option value="BUY">買進</option><option value="SELL">賣出</option><option value="DIVIDEND">配息</option></select><input type="number" value={draft.shares} onChange={e=>setDraft({...draft,shares:num(e.target.valueAsNumber)})}/><input type="number" value={draft.price} onChange={e=>setDraft({...draft,price:num(e.target.valueAsNumber)})}/><input placeholder="備註" value={draft.note} onChange={e=>setDraft({...draft,note:e.target.value})}/><button onClick={()=>applyTrade(draft)}>新增並套用</button><button onClick={addTrade}>只新增紀錄</button></div><div className="table">{state.trades.map(t=><div className="row" key={t.id}><span>{t.date}</span><span>{t.symbol}</span><span>{t.action}</span><span>{t.shares} 股</span><b>{money(t.price*t.shares+t.fee+t.tax)}</b><button onClick={()=>setState(s=>({...s,trades:s.trades.filter(x=>x.id!==t.id)}))}>刪除</button></div>)}</div></Card>}
-    {tab==='sync' && <Card title="Firebase / 備份 / 還原"><div className="params"><input placeholder="Firebase Realtime Database URL，例如 https://xxx-default-rtdb.firebaseio.com" value={state.firebase.databaseURL} onChange={e=>setState(s=>({...s,firebase:{...s.firebase,databaseURL:e.target.value}}))}/><input placeholder="自訂個人密鑰，同一組密鑰代表同一份資料" value={state.firebase.secretPath} onChange={e=>setState(s=>({...s,firebase:{...s.firebase,secretPath:e.target.value}}))}/><input placeholder="Cloudflare Worker URL" value={state.workerUrl} onChange={e=>setState(s=>({...s,workerUrl:e.target.value}))}/><input type="number" value={state.refreshSec} onChange={e=>setState(s=>({...s,refreshSec:num(e.target.valueAsNumber)}))}/></div><div className="sync-panel"><div><b>自動同步：{state.firebase.autoSync?'已啟用':'未啟用'}</b><p>裝置 ID：{state.firebase.clientId.slice(0,8)}｜最後同步：{state.firebase.lastSyncAt ? tw(state.firebase.lastSyncAt) : '尚未同步'}｜{syncBusy?'同步中…':sync}</p></div><button onClick={toggleAutoSync}>{state.firebase.autoSync?'關閉自動同步':'啟用自動同步'}</button></div><div className="actions"><button disabled={syncBusy} onClick={uploadCloud}>上傳雲端</button><button disabled={syncBusy} onClick={downloadCloud}>下載雲端</button><button onClick={backup}>備份 JSON</button><label className="file">還原 JSON<input type="file" accept="application/json" onChange={e=>restore(e.target.files?.[0])}/></label><button onClick={()=>setState(defaultState)}>重設</button></div><p className="note">同步方式：Windows 與 iPhone 使用相同 Firebase URL + 相同個人密鑰，即可共用同一份資料。第一次建議先在 Windows 按「上傳雲端」，再到 iPhone 按「下載雲端」，確認成功後再啟用自動同步。</p><p className="note">若瀏覽器顯示「離線備援 / API 未連線」，請部署 worker/index.js 到 Cloudflare Worker，並把網址填到 Cloudflare Worker URL。</p></Card>}
+    {tab==='sync' && <Card title="Firebase / 備份 / 還原"><div className="params"><input placeholder="Firebase Realtime Database URL" value={state.firebase.databaseURL} onChange={e=>setState(s=>({...s,firebase:{...s.firebase,databaseURL:e.target.value}}))}/><input placeholder="自訂個人密鑰" value={state.firebase.secretPath} onChange={e=>setState(s=>({...s,firebase:{...s.firebase,secretPath:e.target.value}}))}/><input placeholder="Cloudflare Worker URL" value={state.workerUrl} onChange={e=>setState(s=>({...s,workerUrl:e.target.value}))}/><input type="number" value={state.refreshSec} onChange={e=>setState(s=>({...s,refreshSec:num(e.target.valueAsNumber)}))}/></div><div className="actions"><button onClick={()=>syncFirebase(state.firebase,state).then(()=>setSync('已上傳 '+tw(now()))).catch(e=>setSync('上傳失敗 '+e.message))}>上傳雲端</button><button onClick={()=>syncFirebase(state.firebase).then(s=>{if(s)setState(s);setSync('已下載 '+tw(now()))}).catch(e=>setSync('下載失敗 '+e.message))}>下載雲端</button><button onClick={backup}>備份 JSON</button><label className="file">還原 JSON<input type="file" accept="application/json" onChange={e=>restore(e.target.files?.[0])}/></label><button onClick={()=>setState(defaultState)}>重設</button></div><p>{sync}</p><p className="note">若瀏覽器顯示「離線備援 / API 未連線」，請部署 worker/index.js 到 Cloudflare Worker，並把網址填到 Cloudflare Worker URL。</p></Card>}
   </main>
 }
 function Risk({label,value}:{label:string;value:number}){return <div className="risk"><span>{label}</span><div><i style={{width:`${Math.max(2,Math.min(100,value))}%`}}/></div><b>{(label==='Beta'||label==='槓桿'?value/50:value).toFixed(2)}</b></div>}

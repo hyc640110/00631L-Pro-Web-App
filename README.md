@@ -1,6 +1,6 @@
-# 00631L Pro Web App v6.2 Ultimate
+# 00631L Pro Web App v6.1 Ultimate
 
-本版重點：Firebase 自動同步、跨裝置資料共享、JSON 備份還原、GitHub Pages 部署、Cloudflare Worker 股價代理。
+可在本機執行的台股槓桿配置儀表板。
 
 ## 本機啟動
 
@@ -9,23 +9,21 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-## 建置
+若 PowerShell 擋住 `npm`，請使用 `npm.cmd`。
 
-```cmd
-npm.cmd run build
-```
+## v6.1 更新
 
-## Firebase 同步使用方式
+- 新增完整交易紀錄頁：買進、賣出、配息、手續費、證交稅、套用到持股。
+- 改良 Cloudflare Worker 股價 Proxy。
+- 改良 Firebase 上傳 / 下載同步。
+- 改良 JSON 備份與還原。
+- 改良資產配置、十年成長曲線與風險條。
+- 保留離線備援資料，API 失敗時仍可使用模擬與配置功能。
 
-1. 建立 Firebase Realtime Database。
-2. 複製 Database URL，例如 `https://xxx-default-rtdb.firebaseio.com`。
-3. 在 App 的「同步設定」輸入 Firebase URL。
-4. 輸入自訂個人密鑰，例如 `my-00631l`。
-5. Windows 先按「上傳雲端」。
-6. iPhone 使用同一個網址與密鑰後按「下載雲端」。
-7. 確認資料一致後啟用「自動同步」。
+## Cloudflare Worker
+
+將 `worker/index.js` 部署到 Cloudflare Worker，取得網址後填入網頁的「Cloudflare Worker URL」。
 
 ## GitHub Pages
 
-本專案使用 Vite base：`/00631L-Pro-Web-App/`。
-若 Repository 名稱不同，請修改 `vite.config.ts` 的 base。
+`.github/workflows/deploy.yml` 已包含 GitHub Pages 部署流程。
