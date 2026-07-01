@@ -9,7 +9,7 @@ GitHub Pages：
 https://hyc640110.github.io/00631L-Pro-Web-App/
 
 目前版本：
-v6.1 Ultimate
+v6.2 Sync Fix 開發中
 
 ---
 
@@ -19,9 +19,9 @@ GitHub Pages 已可正常開啟畫面。
 
 本機 localhost 可正常執行。
 
-Firebase Realtime Database 上傳 / 下載同步功能已完成。
+Firebase Realtime Database 可看到雲端資料路徑 `/portfolio/631128`。
 
-Cloud 同步功能正常；不同裝置若要看到相同資料，需要使用相同的 Firebase Database URL 與相同的自訂個人密鑰。
+目前正在修正手機與電腦下載後狀態提示不清楚、雲端資料套用不明確的問題。
 
 ---
 
@@ -59,6 +59,12 @@ Realtime Database：已完成。
 /portfolio/{自訂個人密鑰}
 ```
 
+目前已統一使用：
+
+```txt
+/portfolio/631128
+```
+
 注意：手機與電腦必須輸入同一組 Database URL 與同一組個人密鑰，才會讀寫同一份雲端資料。
 
 ---
@@ -87,8 +93,8 @@ Realtime Database：已完成。
 
 ## 下一步
 
-1. 完成 Cloudflare Worker 股價 Proxy 部署。
-2. 確認 00631L、0050、00865B 即時股價可自動更新。
-3. 改善手機與電腦同步提示，降低密鑰不同造成資料不一致的問題。
+1. 修正同步診斷：顯示下載中、下載成功、下載失敗、同步路徑與資料筆數。
+2. 確認手機下載雲端後可套用電腦上傳的股數。
+3. 完成 Cloudflare Worker 股價 Proxy 部署。
 4. 新增技術指標：KD、MA5、MA20、RSI、MACD。
 5. 強化 AI 加碼 / 再平衡邏輯。
